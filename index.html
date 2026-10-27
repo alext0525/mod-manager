@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Mod Manager</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>Mod Manager</h1>
+    <div class="game-picker">
+      <select id="gameSelect"></select>
+      <button id="addGameBtn" title="Add another game">+ Add Game</button>
+    </div>
+  </header>
+
+  <main>
+    <div id="dropZone" class="drop-zone">
+      <p><strong>Drag a mod file here</strong></p>
+      <p class="hint">Accepts .zip, .rar and .7z</p>
+      <p class="hint" id="gameHint"></p>
+      <p>or</p>
+      <button id="browseBtn">Browse for a mod file</button>
+    </div>
+
+    <h2>Installed Mods</h2>
+    <ul id="modList" class="mod-list"></ul>
+  </main>
+
+  <div id="modalOverlay" class="modal-overlay hidden">
+    <div class="modal" id="modalBox"></div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

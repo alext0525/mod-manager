@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Local runtime data — contains machine-specific paths and personal mod library
+data/*
+!data/.gitkeep
+
+# Logs
+*.log
+log.txt
+
+# Local / editor config
+.env
+.env.*
+*.local
+.vscode/
+.idea/
+
+# OS cruft
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Build output
+dist/
+out/
+build/

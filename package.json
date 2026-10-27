@@ -1,0 +1,18 @@
+{
+  "name": "mod-manager",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local mod manager: drop a zip, it installs into your game's Paks folder.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "dependencies": {
+    "7zip-min": "^3.0.1",
+    "adm-zip": "^0.5.10",
+    "node-unrar-js": "^2.0.2"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0"
+  }
+}
