@@ -2,6 +2,13 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
+// Packaged builds live in a read-only folder, so keep mods and state in
+// Documents\Mod Manager instead. Must be set before lib/ is loaded.
+if (app.isPackaged && !process.env.MOD_MANAGER_HOME) {
+  process.env.MOD_MANAGER_HOME = path.join(app.getPath('documents'), 'Mod Manager');
+}
+
+const { DATA_DIR } = require('./lib/paths');
 const gameStore = require('./lib/gameStore');
 const modStore = require('./lib/modStore');
 const modInstaller = require('./lib/modInstaller');
@@ -63,8 +70,9 @@ ipcMain.handle('choose-zip', async () => {
   return result.filePaths[0];
 });
 
-const LOG_FILE = path.join(__dirname, 'data', 'log.txt');
+const LOG_FILE = path.join(DATA_DIR, 'log.txt');
 ipcMain.handle('log', (event, message) => {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] ${message}\n`);
 });
 

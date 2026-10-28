@@ -5,7 +5,8 @@
   "description": "Local mod manager: drop a zip, it installs into your game's Paks folder.",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "dist": "electron-builder --win"
   },
   "dependencies": {
     "7zip-min": "^3.0.1",
@@ -13,6 +14,47 @@
     "node-unrar-js": "^2.0.2"
   },
   "devDependencies": {
-    "electron": "^31.0.0"
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "author": "alext0525",
+  "build": {
+    "appId": "com.alext0525.modmanager",
+    "productName": "Mod Manager",
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer.js",
+      "index.html",
+      "style.css",
+      "lib/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/7zip-bin/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "ModManager-${version}-portable.exe"
+    },
+    "nsis": {
+      "artifactName": "ModManager-${version}-setup.exe",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   }
 }
