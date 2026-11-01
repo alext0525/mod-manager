@@ -5,6 +5,7 @@ const browseBtn = document.getElementById('browseBtn');
 const modListEl = document.getElementById('modList');
 const profilesBtn = document.getElementById('profilesBtn');
 const gameUpdateBanner = document.getElementById('gameUpdateBanner');
+const modePanel = document.getElementById('modePanel');
 const appUpdateBar = document.getElementById('appUpdateBar');
 const modalOverlay = document.getElementById('modalOverlay');
 const modalBox = document.getElementById('modalBox');
@@ -57,6 +58,12 @@ modalOverlay.addEventListener('click', (e) => {
 
 function currentGame() {
   return games.find((g) => g.id === currentGameId);
+}
+
+// Whether the user wants a mod in use (same rule as lib/modStore.js): for
+// GTA V / RDR2 that's being in the modded set, not having files in the folder.
+function isWanted(mod) {
+  return (mod.enabled !== undefined ? mod.enabled : mod.active) !== false;
 }
 
 // ---------- Games ----------
@@ -296,7 +303,7 @@ function isOlderThanGame(mod, game) {
 
 function renderGameUpdateBanner() {
   const game = currentGame();
-  const activeMods = currentMods.filter((m) => m.active !== false);
+  const activeMods = currentMods.filter(isWanted);
   if (!game || !game.updatedSinceLastCheck || activeMods.length === 0) {
     gameUpdateBanner.classList.add('hidden');
     return;
@@ -305,7 +312,13 @@ function renderGameUpdateBanner() {
     <div>
       <strong>${esc(game.name)} has updated since your mods were added.</strong>
       Mods made for the old version can crash the game or quietly stop working. If something's
-      wrong, deactivate the mods marked <em>Older than game update</em>.
+      wrong, ${game.switchable ? 'leave out' : 'deactivate'} the mods marked <em>Older than game update</em>.
+      ${
+        game.switchable
+          ? 'Script Hook in particular stops working after each game update until its author ' +
+            'releases a matching version, so modded mode may fail to start until you add that.'
+          : ''
+      }
     </div>
     <button class="secondary" id="ackGameUpdate">My mods work</button>
   `;
@@ -313,6 +326,157 @@ function renderGameUpdateBanner() {
   document.getElementById('ackGameUpdate').addEventListener('click', async () => {
     await window.modManager.acknowledgeGameUpdate(game.id);
     await loadGames(game.id);
+  });
+}
+
+// ---------- Modded / clean (GTA V, RDR2) ----------
+
+function unexpectedFilesHtml(check) {
+  const unknown = check.unexpected.filter((u) => !u.isMod);
+  return `
+    <div class="folder-check bad">
+      <strong>Not safe for online:</strong> the game folder has files that aren't part of the clean game.
+      <ul class="modal-list">
+        ${check.unexpected
+          .map((u) => `<li>${esc(u.name)} — ${u.isMod ? 'a mod file' : 'unknown (maybe from a game update)'}</li>`)
+          .join('')}
+      </ul>
+      <p class="hint-text">The app didn't put ${check.unexpected.length === 1 ? 'this' : 'these'} there, so it
+      won't delete ${check.unexpected.length === 1 ? 'it' : 'them'}. Remove mod files from the game folder
+      yourself${unknown.length ? ', and mark files from a game update as game files' : ''}.</p>
+      <div class="mode-actions">
+        <button class="secondary" id="openGameFolder">Open game folder</button>
+        ${unknown.length ? '<button class="secondary" id="trustFiles">The unknown ones are game files</button>' : ''}
+        <button class="secondary" id="recheckFolder">Check again</button>
+      </div>
+    </div>`;
+}
+
+async function renderModePanel() {
+  const game = currentGame();
+  dropZone.classList.toggle('compact', Boolean(game && game.switchable));
+  if (!game || !game.switchable) {
+    modePanel.classList.add('hidden');
+    return;
+  }
+
+  const modded = game.mode === 'modded';
+  let check = { clean: true, unexpected: [] };
+  if (!modded) {
+    try {
+      check = await window.modManager.checkGameFolder(game.id);
+    } catch (err) {
+      window.modManager.log('check-game-folder: ' + errorText(err));
+    }
+  }
+  const inSet = currentMods.filter(isWanted).length;
+
+  modePanel.innerHTML = `
+    <div class="mode-head">
+      <div>
+        <div class="mode-title">
+          ${
+            modded
+              ? '<span class="badge warn">Modded</span> Mods are in the game folder — story mode only'
+              : check.clean
+                ? '<span class="badge on">Clean</span> No mods in the game folder — safe for online'
+                : '<span class="badge danger">Not clean</span> The app\'s mods are out, but other files are in the game folder'
+          }
+        </div>
+        <p class="hint-text">${esc(game.moddedNote)}</p>
+      </div>
+    </div>
+    <div class="mode-actions">
+      <button id="playModded" ${inSet ? '' : 'disabled title="Add a mod first"'}>Play modded (story)</button>
+      <button class="secondary" id="playOnline">Play online (clean)</button>
+      ${modded ? '<button class="secondary" id="makeClean">Take mods out now</button>' : ''}
+    </div>
+    ${!modded && !check.clean ? unexpectedFilesHtml(check) : ''}
+  `;
+  modePanel.classList.remove('hidden');
+
+  document.getElementById('playModded').addEventListener('click', () => playGame(game, 'modded'));
+  document.getElementById('playOnline').addEventListener('click', () => playGame(game, 'online'));
+  const makeClean = document.getElementById('makeClean');
+  if (makeClean) {
+    makeClean.addEventListener('click', async () => {
+      try {
+        const result = await window.modManager.setGameMode({ gameId: game.id, mode: 'clean' });
+        await loadGames(game.id);
+        if (result.errors.length) showResults("Some mods couldn't be taken out", result.errors);
+        else showToast(result.clean ? 'Mods taken out. The game folder is clean.' : 'Mods taken out, but other files need a look.');
+      } catch (err) {
+        showToast(errorText(err), true);
+      }
+    });
+  }
+  const openFolder = document.getElementById('openGameFolder');
+  if (openFolder) openFolder.addEventListener('click', () => window.modManager.openGameFolder(game.id));
+  const recheck = document.getElementById('recheckFolder');
+  if (recheck) recheck.addEventListener('click', () => loadMods());
+  const trust = document.getElementById('trustFiles');
+  if (trust) {
+    trust.addEventListener('click', async () => {
+      const names = check.unexpected.filter((u) => !u.isMod).map((u) => u.name);
+      await window.modManager.trustGameFiles({ gameId: game.id, names });
+      showToast(`Marked ${names.length} file${names.length === 1 ? '' : 's'} as part of the game.`);
+      loadMods();
+    });
+  }
+}
+
+async function playGame(game, mode) {
+  if (mode === 'modded' && game.id === 'rdr2') {
+    const ok = await confirmModal(
+      'Play RDR2 with mods?',
+      'RDR2 has no offline-only switch. When the game opens, choose <strong>Story Mode</strong> — never ' +
+        'Red Dead Online while mods are in. Use <strong>Play online</strong> here to take them out first.',
+      'Start story mode'
+    );
+    if (!ok) return;
+  }
+  showToast(mode === 'modded' ? 'Putting mods in and starting the game…' : 'Taking mods out and checking the folder…', false, true);
+  try {
+    const result = await window.modManager.launchGame({ gameId: game.id, mode });
+    await loadGames(game.id);
+    if (result.launched) {
+      showToast(
+        mode === 'modded'
+          ? `Starting ${game.name} with mods through Steam. Steam may ask you to allow the launch options.`
+          : `Game folder is clean. Starting ${game.name} through Steam.`
+      );
+    } else if (result.errors && result.errors.length) {
+      toastEl.classList.add('hidden');
+      showResults(`Didn't start ${game.name}`, result.errors);
+    } else {
+      toastEl.classList.add('hidden');
+      showResults(`Didn't start ${game.name} online`, [
+        'The game folder still has files that aren\'t part of the clean game — see the list under the mode buttons.',
+      ]);
+    }
+  } catch (err) {
+    showToast(errorText(err), true);
+  }
+}
+
+function confirmModal(title, bodyHtml, confirmLabel) {
+  return new Promise((resolve) => {
+    showModal(`
+      <h3>${esc(title)}</h3>
+      <p>${bodyHtml}</p>
+      <div class="modal-actions">
+        <button class="secondary" id="confirmNo">Cancel</button>
+        <button id="confirmYes">${esc(confirmLabel)}</button>
+      </div>
+    `);
+    document.getElementById('confirmNo').addEventListener('click', () => {
+      hideModal();
+      resolve(false);
+    });
+    document.getElementById('confirmYes').addEventListener('click', () => {
+      hideModal();
+      resolve(true);
+    });
   });
 }
 
@@ -333,29 +497,39 @@ async function loadMods() {
   currentMods = currentGameId ? await window.modManager.getMods(currentGameId) : [];
   const game = currentGame();
   renderGameUpdateBanner();
+  await renderModePanel();
   profilesBtn.disabled = !currentGameId;
+  const switchable = Boolean(game && game.switchable);
 
   if (currentMods.length === 0) {
-    modListEl.innerHTML = '<li class="empty-state">No mods installed yet. Drag mod files above to get started.</li>';
+    modListEl.innerHTML = switchable
+      ? `<li class="empty-state">No mods yet. Most ${esc(game.name)} mods need
+         ${game.id === 'rdr2' ? 'Script Hook RDR2' : 'Script Hook V'} first: download it from its
+         author's site and drop the zip here.</li>`
+      : '<li class="empty-state">No mods installed yet. Drag mod files above to get started.</li>';
     return;
   }
   modListEl.innerHTML = currentMods
     .map((m) => {
-      const active = m.active !== false;
+      const active = isWanted(m);
       const older = active && isOlderThanGame(m, game);
+      const badge = switchable
+        ? active ? 'In modded set' : 'Left out'
+        : active ? 'In game' : 'Not in game';
+      const toggle = switchable ? (active ? 'Leave out' : 'Include') : active ? 'Deactivate' : 'Activate';
       return `
       <li class="${active ? '' : 'inactive'}">
         <div class="mod-info">
           <div class="mod-name">
             ${esc(m.name)}
-            <span class="badge ${active ? 'on' : 'off'}">${active ? 'In game' : 'Not in game'}</span>
+            <span class="badge ${active ? 'on' : 'off'}">${badge}</span>
             ${older ? '<span class="badge warn" title="Added before the game\'s latest update">Older than game update</span>' : ''}
           </div>
           <div class="mod-date">${esc(modDetails(m))}</div>
         </div>
         <div class="mod-actions">
           <button class="secondary" data-toggle="${esc(m.id)}" data-active="${active}">
-            ${active ? 'Deactivate' : 'Activate'}
+            ${toggle}
           </button>
           <button class="danger" data-remove="${esc(m.id)}">Remove</button>
         </div>
@@ -375,11 +549,19 @@ async function loadMods() {
       try {
         const mod = await window.modManager.setModActive({ modId, active: makeActive });
         await loadMods();
-        showToast(
-          makeActive
-            ? `"${mod.name}" is back in the game folder.`
-            : `"${mod.name}" removed from the game, still saved in the app.`
-        );
+        if (switchable) {
+          showToast(
+            makeActive
+              ? `"${mod.name}" is in the modded set${game.mode === 'modded' ? ' and the game folder' : ''}.`
+              : `"${mod.name}" left out of modded mode, still saved in the app.`
+          );
+        } else {
+          showToast(
+            makeActive
+              ? `"${mod.name}" is back in the game folder.`
+              : `"${mod.name}" removed from the game, still saved in the app.`
+          );
+        }
       } catch (err) {
         btn.disabled = false;
         showToast(errorText(err), true);
@@ -426,7 +608,7 @@ async function openProfiles() {
   const game = currentGame();
   if (!game) return;
   const profiles = await window.modManager.getProfiles(game.id);
-  const activeCount = currentMods.filter((m) => m.active !== false).length;
+  const activeCount = currentMods.filter(isWanted).length;
   const modName = (id) => (currentMods.find((m) => m.id === id) || {}).name;
 
   const rows = profiles
@@ -449,11 +631,11 @@ async function openProfiles() {
 
   showModal(`
     <h3>${esc(game.name)} profiles</h3>
-    <p class="hint-text">A profile remembers which mods are in the game. Using one puts exactly
-    those mods in and takes the rest out (they stay saved in the app).</p>
+    <p class="hint-text">A profile remembers which mods are ${game.switchable ? 'in the modded set' : 'in the game'}.
+    Using one puts exactly those mods in and takes the rest out (they stay saved in the app).</p>
     ${profiles.length ? `<ul class="detected-list">${rows}</ul>` : ''}
     <div class="field">
-      <label>Save the ${activeCount} mod${activeCount === 1 ? '' : 's'} in the game now as</label>
+      <label>Save the ${activeCount} mod${activeCount === 1 ? '' : 's'} ${game.switchable ? 'in the modded set' : 'in the game'} now as</label>
       <div class="path-row">
         <input type="text" id="profileName" placeholder="e.g. Co-op night, Vanilla" />
         <button id="saveProfile">Save</button>
