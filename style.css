@@ -277,6 +277,23 @@ button:disabled { opacity: 0.5; cursor: default; }
   border: 1px solid rgba(201, 67, 63, 0.45);
 }
 
+.folder-check.warn-box {
+  background: rgba(230, 170, 60, 0.1);
+  border: 1px solid rgba(230, 170, 60, 0.4);
+}
+
+.list-actions { display: flex; gap: 8px; }
+#crashBanner { margin-bottom: 20px; }
+.modal h4 { margin: 16px 0 4px; font-size: 14px; }
+.log-line {
+  font-family: Consolas, 'Cascadia Mono', monospace;
+  font-size: 12px;
+  color: #a7a8b3;
+  word-break: break-all;
+  margin-top: 2px;
+}
+.log-lines { max-height: 220px; overflow-y: auto; }
+
 /* GTA / RDR2 lead with the mode panel, so the drop zone gets smaller. */
 .drop-zone.compact { padding: 18px 20px; margin-bottom: 24px; }
 
