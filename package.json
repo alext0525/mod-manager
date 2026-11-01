@@ -1,6 +1,6 @@
 {
   "name": "mod-manager",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "description": "Local mod manager: drop a zip, it installs into your game's Paks folder.",
   "main": "main.js",
@@ -61,7 +61,7 @@
       {
         "provider": "github",
         "owner": "alext0525",
-        "repo": "mod-manager"
+        "repo": "mod-manager-releases"
       }
     ]
   }

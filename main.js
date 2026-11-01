@@ -60,11 +60,14 @@ function createWindow() {
 function checkForAppUpdates() {
   if (!app.isPackaged || process.env.PORTABLE_EXECUTABLE_DIR) return;
   const { autoUpdater } = require('electron-updater');
-  autoUpdater.logger = { info: log, warn: log, error: log, debug: () => {} };
+  // Errors only keep their first line: electron-updater appends the whole HTTP
+  // response, headers and cookies included, which drowns the log.
+  const firstLine = (msg) => String(msg && msg.stack ? msg.stack : msg).split('\n')[0];
+  autoUpdater.logger = { info: log, warn: log, error: (msg) => log(firstLine(msg)), debug: () => {} };
   autoUpdater.on('update-downloaded', (info) => {
     if (mainWindow) mainWindow.webContents.send('update-ready', info.version);
   });
-  autoUpdater.checkForUpdates().catch((err) => log(`update check failed: ${err.message}`));
+  autoUpdater.checkForUpdates().catch((err) => log(`update check failed: ${firstLine(err.message)}`));
 }
 
 app.whenReady().then(() => {

@@ -14,7 +14,7 @@ Drop mod archives (.zip / .rar / .7z) onto the window and they install into your
 
 ## Download (Windows)
 
-Grab the latest `.exe` from the [Releases page](../../releases):
+Grab the latest `.exe` from the [releases repo](https://github.com/alext0525/mod-manager-releases/releases) (public, since this source repo is private):
 
 - `ModManager-x.y.z-setup.exe` — installer with Start-menu shortcut. Keeps itself up to date.
 - `ModManager-x.y.z-portable.exe` — no install, just double-click to run. Doesn't auto-update.
@@ -50,4 +50,6 @@ npx electron-builder --win -c.win.signAndEditExecutable=false
 
 ## Publishing a release
 
-Bump `version` in `package.json`, then push a matching tag like `v1.1.0`. The GitHub Actions workflow builds both exes on Windows and attaches them, plus `latest.yml`, to a GitHub Release. Installed copies read `latest.yml` to find the update. You can also run the workflow manually from the Actions tab and download the exes from the run's artifacts.
+Bump `version` in `package.json`, then push a matching tag like `v1.2.1`. The GitHub Actions workflow builds both exes on Windows and publishes them, plus `latest.yml`, as a release in the public [mod-manager-releases](https://github.com/alext0525/mod-manager-releases) repo. Installed copies check for updates without logging in, so they can't see this private repo's releases. They read `latest.yml` there to find an update.
+
+Publishing needs a `RELEASES_TOKEN` secret in this repo: a fine-grained personal access token limited to `mod-manager-releases`, with **Contents: Read and write**. You can also run the workflow manually from the Actions tab and download the exes from the run's artifacts.

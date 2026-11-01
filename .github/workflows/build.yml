@@ -25,12 +25,18 @@ jobs:
         with:
           name: ModManager-windows
           path: dist/*.exe
-      # latest.yml and the .blockmap are what installed copies read to find
-      # and download an update, so they go on the release with the exes.
-      - name: Attach to GitHub Release
+      # Releases go to the public mod-manager-releases repo: this source repo
+      # is private, and installed copies check for updates without logging in.
+      # latest.yml and the .blockmap are what they read to find and download
+      # an update, so they go on the release with the exes. RELEASES_TOKEN is
+      # a fine-grained token with Contents read/write on that repo only.
+      - name: Publish release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          repository: alext0525/mod-manager-releases
+          token: ${{ secrets.RELEASES_TOKEN }}
+          tag_name: ${{ github.ref_name }}
           files: |
             dist/*.exe
             dist/*.exe.blockmap
