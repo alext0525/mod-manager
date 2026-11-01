@@ -17,6 +17,7 @@
   <div id="appUpdateBar" class="banner info hidden"></div>
 
   <main>
+    <div id="crashBanner" class="banner warn hidden"></div>
     <div id="gameUpdateBanner" class="banner warn hidden"></div>
 
     <section id="modePanel" class="mode-panel hidden"></section>
@@ -31,7 +32,11 @@
 
     <div class="list-header">
       <h2>Installed Mods</h2>
-      <button class="secondary" id="profilesBtn" title="Save and switch between sets of mods">Profiles</button>
+      <div class="list-actions">
+        <button class="secondary hidden" id="crashBtn" title="Read the game's crash report and logs to find the mod behind a crash">Crashed?</button>
+        <button class="secondary" id="vanillaBtn" title="Take every mod out of the game (they stay saved in the app)">Back to vanilla</button>
+        <button class="secondary" id="profilesBtn" title="Save and switch between sets of mods">Profiles</button>
+      </div>
     </div>
     <ul id="modList" class="mod-list"></ul>
   </main>

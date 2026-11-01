@@ -6,6 +6,9 @@ const modListEl = document.getElementById('modList');
 const profilesBtn = document.getElementById('profilesBtn');
 const gameUpdateBanner = document.getElementById('gameUpdateBanner');
 const modePanel = document.getElementById('modePanel');
+const crashBanner = document.getElementById('crashBanner');
+const crashBtn = document.getElementById('crashBtn');
+const vanillaBtn = document.getElementById('vanillaBtn');
 const appUpdateBar = document.getElementById('appUpdateBar');
 const modalOverlay = document.getElementById('modalOverlay');
 const modalBox = document.getElementById('modalBox');
@@ -376,6 +379,8 @@ async function renderModePanel() {
     }
   }
   const inSet = currentMods.filter(isWanted).length;
+  const staleHook = outdatedScriptHook(game);
+  const missing = currentMods.filter((m) => isWanted(m) && m.missing && m.missing.length);
 
   modePanel.innerHTML = `
     <div class="mode-head">
@@ -397,6 +402,22 @@ async function renderModePanel() {
       <button class="secondary" id="playOnline">Play online (clean)</button>
       ${modded ? '<button class="secondary" id="makeClean">Take mods out now</button>' : ''}
     </div>
+    ${
+      staleHook
+        ? `<div class="folder-check warn-box"><strong>${esc(game.name)} has updated since ${esc(staleHook.provides)} was added.</strong>
+           Script Hook only works with the game version it was made for, so modded mode will probably fail
+           to start. Get the newest ${esc(staleHook.provides)} from its author and drop the zip here — it
+           replaces the old one.</div>`
+        : ''
+    }
+    ${
+      missing.length
+        ? `<div class="folder-check warn-box"><strong>Missing for modded mode:</strong>
+           <ul class="modal-list">${missing
+             .map((m) => `<li>${esc(m.name)} needs ${esc(m.missing.join(', '))}</li>`)
+             .join('')}</ul></div>`
+        : ''
+    }
     ${!modded && !check.clean ? unexpectedFilesHtml(check) : ''}
   `;
   modePanel.classList.remove('hidden');
@@ -431,7 +452,29 @@ async function renderModePanel() {
   }
 }
 
+// The Script Hook mod in the modded set, if the game has updated since it was
+// added. Script Hook refuses to run on a game version it doesn't know.
+function outdatedScriptHook(game) {
+  if (!game || !game.currentBuildId) return null;
+  const hook = currentMods.find(
+    (m) => isWanted(m) && (m.provides || []).some((p) => p === 'Script Hook V' || p === 'Script Hook RDR2')
+  );
+  if (!hook || !hook.installedOnBuild || hook.installedOnBuild === game.currentBuildId) return null;
+  return { name: hook.name, provides: hook.provides.find((p) => p.startsWith('Script Hook')) };
+}
+
 async function playGame(game, mode) {
+  const staleHook = mode === 'modded' && outdatedScriptHook(game);
+  if (staleHook) {
+    const ok = await confirmModal(
+      `${staleHook.provides} is probably out of date`,
+      `${esc(game.name)} has updated since ${esc(staleHook.provides)} was added, and Script Hook only runs ` +
+        'on the game version it was made for. The game may close at startup or run without mods. ' +
+        `Get the newest ${esc(staleHook.provides)} from its author and drop the zip here to replace it.`,
+      'Start anyway'
+    );
+    if (!ok) return;
+  }
   if (mode === 'modded' && game.id === 'rdr2') {
     const ok = await confirmModal(
       'Play RDR2 with mods?',
@@ -500,12 +543,134 @@ function modDetails(m) {
   return parts.join(' · ');
 }
 
+// ---------- Crash helper ----------
+
+function renderCrashBanner() {
+  const game = currentGame();
+  crashBtn.classList.toggle('hidden', !(game && game.hasDiagnostics));
+  if (!game || !game.newCrashAt) {
+    crashBanner.classList.add('hidden');
+    return;
+  }
+  crashBanner.innerHTML = `
+    <div><strong>${esc(game.name)} crashed</strong> on ${esc(new Date(game.newCrashAt).toLocaleString())}.
+    The app can read the crash report and point at the mods most likely involved.</div>
+    <div class="mode-actions" style="margin:0">
+      <button id="crashBannerOpen">Find the cause</button>
+      <button class="secondary" id="crashBannerDismiss">Dismiss</button>
+    </div>`;
+  crashBanner.classList.remove('hidden');
+  document.getElementById('crashBannerOpen').addEventListener('click', openCrashReport);
+  document.getElementById('crashBannerDismiss').addEventListener('click', async () => {
+    await window.modManager.acknowledgeCrash(game.id);
+    await loadGames(game.id);
+  });
+}
+
+crashBtn.addEventListener('click', openCrashReport);
+
+async function openCrashReport() {
+  const game = currentGame();
+  if (!game) return;
+  const r = await window.modManager.analyzeCrash(game.id);
+  await window.modManager.acknowledgeCrash(game.id);
+  const when = (t) => new Date(t).toLocaleString();
+  const section = (title, body) => `<h4>${title}</h4>${body}`;
+  const list = (items) => `<ul class="modal-list">${items.map((i) => `<li>${i}</li>`).join('')}</ul>`;
+
+  const suspects = [];
+  if (r.mentioned.length) {
+    suspects.push(
+      section(
+        'Named in the crash report or logs',
+        list(
+          r.mentioned.map(
+            (m) =>
+              `<strong>${esc(m.name)}</strong>${m.nearError ? ' <span class="badge danger">right at an error</span>' : ''}` +
+              `<div class="log-line">${esc(m.line)}</div>`
+          )
+        )
+      )
+    );
+  }
+  if (r.outdated.length) {
+    suspects.push(section('Added before the latest game update', list(r.outdated.map(esc))));
+  }
+  if (r.recent.length) {
+    suspects.push(
+      section(
+        'Added most recently',
+        list(r.recent.map((m) => `${esc(m.name)} <span class="hint-text">(${esc(when(m.installedAt))})</span>`))
+      )
+    );
+  }
+
+  showModal(`
+    <h3>Why did ${esc(r.gameName)} crash?</h3>
+    ${
+      r.crash
+        ? `<p class="hint-text">Newest crash report: ${esc(when(r.crash.time))}</p>`
+        : '<p class="hint-text">No crash report found — this is based on the game\'s logs.</p>'
+    }
+    ${
+      suspects.length
+        ? suspects.join('')
+        : '<p>No mod stands out. If the game keeps crashing, take mods out half at a time (or use Back to vanilla) to narrow it down.</p>'
+    }
+    <p class="modal-note">The fastest check: take the top suspect out (Deactivate / Leave out), play again,
+    and see if the crash stops.</p>
+    ${
+      r.errorLines.length
+        ? `<details><summary>Error lines from the logs (${r.errorLines.length})</summary>
+           <div class="log-lines">${r.errorLines.map((l) => `<div class="log-line">${esc(l)}</div>`).join('')}</div></details>`
+        : ''
+    }
+    ${
+      r.filesRead.length
+        ? `<details><summary>Files read (${r.filesRead.length})</summary>
+           ${list(r.filesRead.map((f) => `${esc(f.file)} <span class="hint-text">(${esc(when(f.time))})</span>`))}</details>`
+        : ''
+    }
+    <div class="modal-actions"><button id="closeCrash">Close</button></div>
+  `);
+  document.getElementById('closeCrash').addEventListener('click', hideModal);
+  renderCrashBanner();
+  crashBanner.classList.add('hidden');
+}
+
+// ---------- Back to vanilla ----------
+
+vanillaBtn.addEventListener('click', async () => {
+  const game = currentGame();
+  if (!game) return;
+  const ok = await confirmModal(
+    `Take every mod out of ${game.name}?`,
+    game.switchable
+      ? 'All the app\'s mods come out of the game folder, the same as clean mode. They stay saved in the app.'
+      : 'All the app\'s mods come out of the game folder and stay saved in the app. Your current set is saved ' +
+          'as the profile <strong>Before vanilla</strong>, so Profiles → Use puts them all back in one click. ' +
+          'Files the app didn\'t install (for example mods copied in by hand) aren\'t touched.',
+    'Back to vanilla'
+  );
+  if (!ok) return;
+  try {
+    const result = await window.modManager.goVanilla(game.id);
+    await loadGames(game.id);
+    if (result.errors.length) showResults("Some mods couldn't be taken out", result.errors);
+    else showToast(`${game.name} is vanilla.${result.profileName ? ` Your mods are saved as "${result.profileName}".` : ''}`);
+  } catch (err) {
+    showToast(errorText(err), true);
+  }
+});
+
 async function loadMods() {
   currentMods = currentGameId ? await window.modManager.getMods(currentGameId) : [];
   const game = currentGame();
   renderGameUpdateBanner();
+  renderCrashBanner();
   await renderModePanel();
   profilesBtn.disabled = !currentGameId;
+  vanillaBtn.disabled = !currentMods.some((m) => m.active !== false);
   const switchable = Boolean(game && game.switchable);
 
   if (currentMods.length === 0) {
@@ -531,6 +696,11 @@ async function loadMods() {
             ${esc(m.name)}
             <span class="badge ${active ? 'on' : 'off'}">${badge}</span>
             ${older ? '<span class="badge warn" title="Added before the game\'s latest update">Older than game update</span>' : ''}
+            ${
+              active && m.missing && m.missing.length
+                ? `<span class="badge danger" title="Add a mod that provides this">Needs ${esc(m.missing.join(', '))}</span>`
+                : ''
+            }
           </div>
           <div class="mod-date">${esc(modDetails(m))}</div>
         </div>
@@ -714,6 +884,18 @@ function previewCardHtml(s) {
   return `
     <div class="preview-mod">
       <div class="mod-name">${esc(s.name)} ${s.kind ? `<span class="badge on">${esc(s.kind)}</span>` : ''}</div>
+      ${
+        s.replaces && s.replaces.length
+          ? `<p class="modal-note">Replaces the older <strong>${esc(s.replaces.join(', '))}</strong> — it's removed
+             (to the Recycle Bin) when this is installed.</p>`
+          : ''
+      }
+      ${
+        s.missing && s.missing.length
+          ? `<div class="folder-check warn-box"><strong>Needs ${esc(s.missing.join(', '))}</strong>, which isn't
+             installed. It can be installed now, but won't work until you add ${s.missing.length === 1 ? 'it' : 'them'}.</div>`
+          : ''
+      }
       ${s.notes.map((n) => `<p class="modal-note">${esc(n)}</p>`).join('')}
       ${s.destinations
         .map(

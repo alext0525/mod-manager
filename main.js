@@ -15,6 +15,8 @@ const modInstaller = require('./lib/modInstaller');
 const gameDetect = require('./lib/gameDetect');
 const profileStore = require('./lib/profileStore');
 const modeSwitch = require('./lib/modeSwitch');
+const requirements = require('./lib/requirements');
+const crashHelper = require('./lib/crashHelper');
 const { getStrategy } = require('./lib/strategies');
 
 const LOG_FILE = path.join(DATA_DIR, 'log.txt');
@@ -94,11 +96,14 @@ app.on('activate', () => {
 handle('get-games', () =>
   gameStore.loadGames().map((g) => {
     const known = gameDetect.knownGameFor(g);
+    const crashAt = crashHelper.latestCrashTime(g);
     return {
       ...gameDetect.withLiveInfo(g),
       hint: getStrategy(g.strategy).hint,
       switchable: modeSwitch.isSwitchable(g),
       moddedNote: (known && known.moddedNote) || '',
+      hasDiagnostics: Boolean(known && known.diagnostics),
+      newCrashAt: crashAt && crashAt > (g.crashSeenAt || 0) ? crashAt : null,
     };
   })
 );
@@ -117,10 +122,34 @@ handle('acknowledge-game-update', (gameId) => gameDetect.acknowledgeUpdate(gameI
 
 // ---------- Mods ----------
 
+// Each mod comes with the requirements nothing currently provides.
 handle('get-mods', (gameId) => {
   const mods = modStore.loadMods();
-  return gameId ? mods.filter((m) => m.gameId === gameId) : mods;
+  const games = new Map(gameStore.loadGames().map((g) => [g.id, g]));
+  return mods
+    .filter((m) => !gameId || m.gameId === gameId)
+    .map((m) => ({ ...m, missing: games.has(m.gameId) ? requirements.missingFor(m, games.get(m.gameId), mods) : [] }));
 });
+
+// Takes every app-installed mod out of the game. The set in use is saved as
+// a "Before vanilla" profile first, so one click puts it back. Files the app
+// didn't install are left alone.
+handle('go-vanilla', (gameId) => {
+  const game = gameStore.getGame(gameId);
+  log(`going vanilla: ${gameId}`);
+  if (modeSwitch.isSwitchable(game)) {
+    const result = modeSwitch.setMode(gameId, 'clean');
+    return { ...result, profileName: null };
+  }
+  const inUse = modStore.loadMods().filter((m) => m.gameId === gameId && modStore.isWanted(m));
+  const profile = inUse.length ? profileStore.saveCurrentAs({ gameId, name: 'Before vanilla' }) : null;
+  const { errors } = modInstaller.applyProfile({ gameId, modIds: [] });
+  return { errors, profileName: profile && profile.name };
+});
+
+handle('analyze-crash', (gameId) => crashHelper.analyze(gameId));
+
+handle('acknowledge-crash', (gameId) => crashHelper.acknowledgeCrash(gameId));
 
 handle('choose-folder', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
@@ -161,14 +190,19 @@ handle('discard-staged', (stageId) => {
 handle('commit-staged', async (stageId) => {
   const zipPath = stagedOriginals.get(stageId);
   stagedOriginals.delete(stageId);
-  const mod = modInstaller.commitStaged(stageId);
+  const mod = await modInstaller.commitStaged(stageId, { trash: (target) => shell.trashItem(target) });
   log(`installed "${mod.name}": ${JSON.stringify(mod.placements)}`);
   return { ...mod, ...(await trashOriginal(zipPath, mod)) };
 });
 
 handle('install-mod', async ({ gameId, zipPath, customTargetDir }) => {
   log(`installing ${zipPath}`);
-  const mod = await modInstaller.installMod({ gameId, zipPath, customTargetDir });
+  const mod = await modInstaller.installMod({
+    gameId,
+    zipPath,
+    customTargetDir,
+    trash: (target) => shell.trashItem(target),
+  });
   log(`installed "${mod.name}": ${JSON.stringify(mod.placements)}`);
   return { ...mod, ...(await trashOriginal(zipPath, mod)) };
 });
