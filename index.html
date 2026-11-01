@@ -14,16 +14,23 @@
     </div>
   </header>
 
+  <div id="appUpdateBar" class="banner info hidden"></div>
+
   <main>
+    <div id="gameUpdateBanner" class="banner warn hidden"></div>
+
     <div id="dropZone" class="drop-zone">
-      <p><strong>Drag a mod file here</strong></p>
-      <p class="hint">Accepts .zip, .rar and .7z</p>
+      <p><strong>Drag mod files here</strong></p>
+      <p class="hint">Accepts .zip, .rar and .7z — several at once is fine</p>
       <p class="hint" id="gameHint"></p>
       <p>or</p>
-      <button id="browseBtn">Browse for a mod file</button>
+      <button id="browseBtn">Browse for mod files</button>
     </div>
 
-    <h2>Installed Mods</h2>
+    <div class="list-header">
+      <h2>Installed Mods</h2>
+      <button class="secondary" id="profilesBtn" title="Save and switch between sets of mods">Profiles</button>
+    </div>
     <ul id="modList" class="mod-list"></ul>
   </main>
 
