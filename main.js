@@ -12,14 +12,39 @@ const { DATA_DIR } = require('./lib/paths');
 const gameStore = require('./lib/gameStore');
 const modStore = require('./lib/modStore');
 const modInstaller = require('./lib/modInstaller');
+const gameDetect = require('./lib/gameDetect');
+const profileStore = require('./lib/profileStore');
 const { getStrategy } = require('./lib/strategies');
+
+const LOG_FILE = path.join(DATA_DIR, 'log.txt');
+function log(message) {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] ${message}\n`);
+  } catch {
+    // logging must never take the app down
+  }
+}
+
+// Like ipcMain.handle, but every failure is written to log.txt with its stack
+// before the message goes back to the window.
+function handle(channel, fn) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    try {
+      return await fn(...args);
+    } catch (err) {
+      log(`${channel} failed: ${err && err.stack ? err.stack : err}`);
+      throw err;
+    }
+  });
+}
 
 let mainWindow;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 900,
-    height: 700,
+    height: 760,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -30,7 +55,27 @@ function createWindow() {
   mainWindow.loadFile('index.html');
 }
 
-app.whenReady().then(createWindow);
+// Updates come from GitHub Releases. Only the installed (setup.exe) build can
+// update itself; the portable exe and running from source skip this.
+function checkForAppUpdates() {
+  if (!app.isPackaged || process.env.PORTABLE_EXECUTABLE_DIR) return;
+  const { autoUpdater } = require('electron-updater');
+  autoUpdater.logger = { info: log, warn: log, error: log, debug: () => {} };
+  autoUpdater.on('update-downloaded', (info) => {
+    if (mainWindow) mainWindow.webContents.send('update-ready', info.version);
+  });
+  autoUpdater.checkForUpdates().catch((err) => log(`update check failed: ${err.message}`));
+}
+
+app.whenReady().then(() => {
+  try {
+    gameDetect.refreshKnownGames();
+  } catch (err) {
+    log(`refreshing games failed: ${err.stack}`);
+  }
+  createWindow();
+  checkForAppUpdates();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
@@ -40,20 +85,32 @@ app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
 
-ipcMain.handle('get-games', () => {
-  return gameStore.loadGames().map((g) => ({ ...g, hint: getStrategy(g.strategy).hint }));
-});
+// ---------- Games ----------
 
-ipcMain.handle('add-game', (event, { name, modsPath, strategy }) =>
-  gameStore.addGame({ name, modsPath, strategy })
+handle('get-games', () =>
+  gameStore
+    .loadGames()
+    .map((g) => ({ ...gameDetect.withLiveInfo(g), hint: getStrategy(g.strategy).hint }))
 );
 
-ipcMain.handle('get-mods', (event, gameId) => {
+handle('detect-games', () => gameDetect.detectInstalled());
+
+handle('add-detected-game', (catalogId) => gameDetect.addDetected(catalogId));
+
+handle('guess-game-folder', (folder) => gameDetect.guessFromFolder(folder));
+
+handle('add-game', ({ name, modsPath, strategy }) => gameStore.addGame({ name, modsPath, strategy }));
+
+handle('acknowledge-game-update', (gameId) => gameDetect.acknowledgeUpdate(gameId));
+
+// ---------- Mods ----------
+
+handle('get-mods', (gameId) => {
   const mods = modStore.loadMods();
   return gameId ? mods.filter((m) => m.gameId === gameId) : mods;
 });
 
-ipcMain.handle('choose-folder', async () => {
+handle('choose-folder', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openDirectory'],
   });
@@ -61,23 +118,21 @@ ipcMain.handle('choose-folder', async () => {
   return result.filePaths[0];
 });
 
-ipcMain.handle('choose-zip', async () => {
+handle('choose-zip', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ['openFile'],
+    properties: ['openFile', 'multiSelections'],
     filters: [{ name: 'Mod archives', extensions: ['zip', 'rar', '7z'] }],
   });
-  if (result.canceled || result.filePaths.length === 0) return null;
-  return result.filePaths[0];
+  if (result.canceled) return [];
+  return result.filePaths;
 });
 
-const LOG_FILE = path.join(DATA_DIR, 'log.txt');
-ipcMain.handle('log', (event, message) => {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] ${message}\n`);
-});
+handle('log', (message) => log(message));
 
-ipcMain.handle('install-mod', async (event, { gameId, zipPath, customTargetDir }) => {
+handle('install-mod', async ({ gameId, zipPath, customTargetDir }) => {
+  log(`installing ${zipPath}`);
   const mod = await modInstaller.installMod({ gameId, zipPath, customTargetDir });
+  log(`installed "${mod.name}": ${JSON.stringify(mod.placements)}`);
 
   // The archive is now safely stored in the game's zips/ folder, so clear away
   // the file the user dragged in. Recycle Bin, not permanent delete — a bad
@@ -102,13 +157,33 @@ ipcMain.handle('install-mod', async (event, { gameId, zipPath, customTargetDir }
   return { ...mod, originalRemoved, originalRemoveError };
 });
 
-ipcMain.handle('remove-mod', (event, { modId }) => {
-  return modInstaller.removeMod({
+handle('remove-mod', ({ modId }) =>
+  modInstaller.removeMod({
     modId,
     trash: (target) => shell.trashItem(target),
-  });
+  })
+);
+
+handle('set-mod-active', ({ modId, active }) =>
+  active ? modInstaller.activateMod(modId) : modInstaller.deactivateMod(modId)
+);
+
+// ---------- Profiles ----------
+
+handle('get-profiles', (gameId) => profileStore.listProfiles(gameId));
+
+handle('save-profile', ({ gameId, name }) => profileStore.saveCurrentAs({ gameId, name }));
+
+handle('delete-profile', (profileId) => profileStore.deleteProfile(profileId));
+
+handle('apply-profile', (profileId) => {
+  const profile = profileStore.getProfile(profileId);
+  return modInstaller.applyProfile({ gameId: profile.gameId, modIds: profile.modIds });
 });
 
-ipcMain.handle('set-mod-active', (event, { modId, active }) => {
-  return active ? modInstaller.activateMod(modId) : modInstaller.deactivateMod(modId);
+// ---------- App updates ----------
+
+handle('install-app-update', () => {
+  const { autoUpdater } = require('electron-updater');
+  autoUpdater.quitAndInstall();
 });
