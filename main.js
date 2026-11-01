@@ -93,13 +93,15 @@ handle('get-games', () =>
     .map((g) => ({ ...gameDetect.withLiveInfo(g), hint: getStrategy(g.strategy).hint }))
 );
 
-handle('detect-games', () => gameDetect.detectInstalled());
+handle('detect-games', () => gameDetect.scanSteam());
 
 handle('add-detected-game', (catalogId) => gameDetect.addDetected(catalogId));
 
 handle('guess-game-folder', (folder) => gameDetect.guessFromFolder(folder));
 
-handle('add-game', ({ name, modsPath, strategy }) => gameStore.addGame({ name, modsPath, strategy }));
+handle('add-game', ({ name, modsPath, strategy, steamAppId }) =>
+  gameDetect.addCustom({ name, modsPath, strategy, steamAppId })
+);
 
 handle('acknowledge-game-update', (gameId) => gameDetect.acknowledgeUpdate(gameId));
 

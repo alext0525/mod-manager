@@ -64,6 +64,7 @@ function currentGame() {
 async function loadGames(selectId) {
   games = await window.modManager.getGames();
   gameSelect.innerHTML = games.map((g) => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('');
+  gameSelect.classList.toggle('hidden', games.length === 0);
   if (games.length > 0) {
     const wanted = selectId || localStorage.getItem('lastGameId');
     currentGameId = games.some((g) => g.id === wanted) ? wanted : games[0].id;
@@ -93,82 +94,136 @@ gameSelect.addEventListener('change', async () => {
 
 addGameBtn.addEventListener('click', openAddGame);
 
+function scanRow(g) {
+  let detail;
+  let action;
+  if (g.status === 'known') {
+    detail = g.modsPath || 'Mods folder not created yet';
+    action = g.modsPath
+      ? `<button data-add="${esc(g.catalogId)}">Add</button>`
+      : '<span class="hint-text">Launch the game once first</span>';
+  } else if (g.status === 'guessed') {
+    detail = `Guess (${g.reason}): ${g.modsPath}`;
+    action = `<button class="secondary" data-setup="${esc(g.steamAppId)}">Check &amp; add</button>`;
+  } else if (g.status === 'unknown') {
+    detail = 'No mods folder found — you can set it up yourself';
+    action = `<button class="secondary" data-setup="${esc(g.steamAppId)}">Set up</button>`;
+  } else {
+    detail = g.reason;
+    action = '';
+  }
+  if (g.added) action = '<span class="badge on">Added</span>';
+
+  return `
+    <li class="${g.status === 'unsupported' ? 'unsupported' : ''}">
+      <div class="mod-info">
+        <div class="mod-name">${esc(g.name)}</div>
+        <div class="mod-date" title="${esc(detail)}">${esc(detail)}</div>
+      </div>
+      ${action}
+    </li>`;
+}
+
 async function openAddGame() {
-  showModal('<h3>Add a Game</h3><p class="hint-text">Looking for games on this PC…</p>');
-  let detected = [];
+  showModal('<h3>Add a Game</h3><p class="hint-text">Looking through your Steam libraries…</p>');
+  let scanned = [];
   try {
-    detected = await window.modManager.detectGames();
+    scanned = await window.modManager.detectGames();
   } catch (err) {
     window.modManager.log('detect-games: ' + errorText(err));
   }
-
-  const rows = detected
-    .map((d) => {
-      let action;
-      if (d.added) action = '<span class="badge on">Added</span>';
-      else if (!d.modsPath) action = '<span class="hint-text">Launch the game once first</span>';
-      else action = `<button data-add="${esc(d.catalogId)}">Add</button>`;
-      return `
-        <li>
-          <div class="mod-info">
-            <div class="mod-name">${esc(d.name)}</div>
-            <div class="mod-date" title="${esc(d.modsPath || '')}">${esc(d.modsPath || '')}</div>
-          </div>
-          ${action}
-        </li>`;
-    })
-    .join('');
+  const known = scanned.filter((g) => g.status === 'known');
+  const others = scanned.filter((g) => g.status !== 'known');
+  // Steam app id of the game being set up by hand, so its updates can be tracked.
+  let setupAppId = null;
 
   showModal(`
     <h3>Add a Game</h3>
     ${
-      detected.length
-        ? `<p class="hint-text">Found on this PC — the app already knows where their mods go:</p>
-           <ul class="detected-list">${rows}</ul>`
-        : '<p class="hint-text">No supported games (Ready or Not, BeamNG.drive) were found through Steam.</p>'
+      known.length
+        ? `<p class="hint-text">The app knows exactly where these games' mods go:</p>
+           <ul class="detected-list">${known.map(scanRow).join('')}</ul>`
+        : ''
     }
-    <details id="otherGame" ${detected.length ? '' : 'open'}>
-      <summary>Another game…</summary>
+    ${
+      others.length
+        ? `<p class="hint-text">Your other Steam games. Where the app found a likely mods folder it shows
+           its guess — every game mods differently, so check the guess against the game's or the mod's
+           instructions.</p>
+           <ul class="detected-list">${others.map(scanRow).join('')}</ul>`
+        : ''
+    }
+    ${scanned.length ? '' : '<p class="hint-text">No Steam games were found on this PC.</p>'}
+    <details id="otherGame" ${scanned.length ? '' : 'open'}>
+      <summary>A game not on Steam…</summary>
       <div class="field">
         <label>The game's install folder</label>
         <div class="path-row">
-          <input type="text" id="gameFolder" placeholder="e.g. D:\\SteamLibrary\\steamapps\\common\\Squad" readonly />
+          <input type="text" id="gameFolder" placeholder="e.g. C:\\Games\\Squad" readonly />
           <button class="secondary" id="gameFolderBrowse">Browse</button>
         </div>
         <p class="hint-text" id="guessResult"></p>
       </div>
-      <div id="manualFields" class="hidden">
-        <div class="field">
-          <label>Game name</label>
-          <input type="text" id="newGameName" />
-        </div>
-        <div class="field">
-          <label>How it loads mods</label>
-          <select id="newGameStrategy">
-            ${Object.entries(STRATEGY_LABELS).map(([id, label]) => `<option value="${id}">${esc(label)}</option>`).join('')}
-          </select>
-        </div>
-        <div class="field">
-          <label>Mods folder</label>
-          <div class="path-row">
-            <input type="text" id="newGamePath" readonly />
-            <button class="secondary" id="newGameBrowse">Browse</button>
-          </div>
-        </div>
-        <div class="modal-actions">
-          <button id="confirmAddGame">Add Game</button>
+    </details>
+    <div id="setupForm" class="setup-form hidden">
+      <h4 id="setupTitle"></h4>
+      <p class="modal-note hidden" id="setupNote"></p>
+      <div class="field">
+        <label>Game name</label>
+        <input type="text" id="newGameName" />
+      </div>
+      <div class="field">
+        <label>How it loads mods</label>
+        <select id="newGameStrategy">
+          ${Object.entries(STRATEGY_LABELS).map(([id, label]) => `<option value="${id}">${esc(label)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field">
+        <label>Mods folder</label>
+        <div class="path-row">
+          <input type="text" id="newGamePath" readonly />
+          <button class="secondary" id="newGameBrowse">Browse</button>
         </div>
       </div>
-    </details>
+      <div class="modal-actions">
+        <button id="confirmAddGame">Add Game</button>
+      </div>
+    </div>
     <div class="modal-actions">
       <button class="secondary" id="cancelAddGame">Close</button>
     </div>
   `);
 
+  // Fills the shared setup form. `guess` may be null (nothing recognised).
+  function openSetup({ name, steamAppId, guess }) {
+    setupAppId = steamAppId || null;
+    document.getElementById('setupTitle').textContent = `Set up ${name}`;
+    document.getElementById('newGameName').value = name;
+    document.getElementById('newGameStrategy').value = guess ? guess.strategy : 'loose';
+    document.getElementById('newGamePath').value = guess ? guess.modsPath : '';
+    const note = document.getElementById('setupNote');
+    note.textContent = guess
+      ? `This is a guess from the folder layout (${guess.reason}). Check the game's modding ` +
+        'instructions or a mod\'s readme to make sure this is where its mods go.'
+      : 'The app couldn\'t find a mods folder. Check the game\'s modding instructions, then choose ' +
+        'the folder its mods go in.';
+    note.classList.remove('hidden');
+    const form = document.getElementById('setupForm');
+    form.classList.remove('hidden');
+    form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
   document.getElementById('cancelAddGame').addEventListener('click', hideModal);
 
   modalBox.querySelectorAll('[data-add]').forEach((btn) => {
     btn.addEventListener('click', () => addDetected(btn.getAttribute('data-add')));
+  });
+
+  modalBox.querySelectorAll('[data-setup]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const g = scanned.find((s) => s.steamAppId === btn.getAttribute('data-setup'));
+      openSetup({ name: g.name, steamAppId: g.steamAppId, guess: g.status === 'guessed' ? g : null });
+    });
   });
 
   document.getElementById('gameFolderBrowse').addEventListener('click', async () => {
@@ -177,23 +232,23 @@ async function openAddGame() {
     document.getElementById('gameFolder').value = folder;
     const guess = await window.modManager.guessGameFolder(folder);
     const result = document.getElementById('guessResult');
+    document.getElementById('setupForm').classList.add('hidden');
 
     if (guess && guess.catalogId) {
       result.textContent = `That's ${guess.name} — adding it…`;
       await addDetected(guess.catalogId);
       return;
     }
-
-    document.getElementById('manualFields').classList.remove('hidden');
-    document.getElementById('newGameName').value = guess ? guess.name : folder.split(/[\\/]/).pop();
-    if (guess) {
-      document.getElementById('newGameStrategy').value = guess.strategy;
-      document.getElementById('newGamePath').value = guess.modsPath;
-      result.textContent = `Looks like ${guess.reason ? 'a ' + guess.reason : 'a known layout'} — check the details below.`;
-    } else {
-      document.getElementById('newGamePath').value = '';
-      result.textContent = "Couldn't tell where this game's mods go. Choose its mods folder below.";
+    if (guess && guess.unsupported) {
+      result.textContent = `${guess.name}: ${guess.unsupported}`;
+      return;
     }
+    result.textContent = '';
+    openSetup({
+      name: guess ? guess.name : folder.split(/[\\/]/).pop(),
+      steamAppId: guess && guess.steamAppId,
+      guess,
+    });
   });
 
   document.getElementById('newGameBrowse').addEventListener('click', async () => {
@@ -210,7 +265,7 @@ async function openAddGame() {
       return;
     }
     try {
-      const game = await window.modManager.addGame({ name, modsPath, strategy });
+      const game = await window.modManager.addGame({ name, modsPath, strategy, steamAppId: setupAppId });
       hideModal();
       await loadGames(game.id);
       showToast(`Added "${game.name}".`);
