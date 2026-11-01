@@ -4,7 +4,7 @@ Drop mod archives (.zip / .rar / .7z) onto the window and they install into your
 
 ## Features
 
-- **Finds your games itself.** Ready or Not and BeamNG.drive are found through Steam (any library folder), so there's no mods folder to pick. For other games, point it at the install folder and it guesses where mods go (Unreal `Content\Paks`, BepInEx `plugins`, a `Mods` folder).
+- **Finds your games itself.** Add Game lists every game in every Steam library. For Ready or Not and BeamNG.drive the mods folder is built in, so there's nothing to pick; BeamNG's `UserPath` setting in `startup.ini` is respected. For other games the app guesses from the folder layout (Unreal `Content\Paks`, BepInEx `plugins`, a `Mods` folder) and labels it as a guess to check. Games where file mods risk an account ban (GTA V, Red Dead Redemption 2, Call of Duty) are listed as not supported, with the reason.
 - **Only installs what the game reads.** For Ready or Not, just the `.pak` / `.ucas` / `.utoc` files go into `Paks` and readmes are left out. A custom map's WorldGen `.sav` goes to `%LOCALAPPDATA%\ReadyOrNot\Saved\SaveGames`.
 - **Mods can't overwrite each other.** If two mods contain the same file, or a file is already there that the app didn't install, the install is refused and the app says which mod to deactivate.
 - **Profiles.** Save the mods currently in the game as a named set and switch between sets in one click.
