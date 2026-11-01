@@ -52,8 +52,14 @@ function hideModal() {
   modalBox.innerHTML = '';
 }
 
+// Set while a modal needs to clean up when it's dismissed by clicking outside
+// it (the install preview discards its staged mods).
+let modalOnDismiss = null;
+
 modalOverlay.addEventListener('click', (e) => {
-  if (e.target === modalOverlay) hideModal();
+  if (e.target !== modalOverlay) return;
+  if (modalOnDismiss) modalOnDismiss();
+  else hideModal();
 });
 
 function currentGame() {
@@ -483,9 +489,10 @@ function confirmModal(title, bodyHtml, confirmLabel) {
 // ---------- Mods ----------
 
 function modDetails(m) {
-  const parts = [`Added ${new Date(m.installedAt).toLocaleString()}`];
+  const parts = [`${m.kind ? m.kind + ' · ' : ''}Added ${new Date(m.installedAt).toLocaleString()}`];
   for (const p of m.placements || []) {
-    if (p.label && p.files && p.files.length) parts.push(`${p.label} added`);
+    // Only extras outside the main mods folder (e.g. a WorldGen save) are named.
+    if (p.to && p.label && p.files && p.files.length) parts.push(`${p.label} added`);
   }
   if (m.skippedFiles) {
     parts.push(`${m.skippedFiles} extra file${m.skippedFiles === 1 ? '' : 's'} (readme etc.) left out`);
@@ -697,8 +704,70 @@ function showResults(title, lines) {
   document.getElementById('closeResults').addEventListener('click', hideModal);
 }
 
-// Installs one after another — archives can be several GB, and each install
-// has to see the files the previous one put down to catch conflicts.
+function fileListHtml(files, max = 8) {
+  const shown = files.slice(0, max).map((f) => `<li>${esc(f)}</li>`).join('');
+  const more = files.length > max ? `<li class="hint-text">…and ${files.length - max} more</li>` : '';
+  return `<ul class="file-list">${shown}${more}</ul>`;
+}
+
+function previewCardHtml(s) {
+  return `
+    <div class="preview-mod">
+      <div class="mod-name">${esc(s.name)} ${s.kind ? `<span class="badge on">${esc(s.kind)}</span>` : ''}</div>
+      ${s.notes.map((n) => `<p class="modal-note">${esc(n)}</p>`).join('')}
+      ${s.destinations
+        .map(
+          (d) => `
+        <div class="dest">
+          <div><strong>${esc(d.label)}</strong>${d.optional ? ' <span class="hint-text">(only if not already there)</span>' : ''}</div>
+          <div class="dest-path">${esc(d.dir)}</div>
+          ${fileListHtml(d.files)}
+        </div>`
+        )
+        .join('')}
+      ${
+        s.skippedCount
+          ? `<details><summary>${s.skippedCount} file${s.skippedCount === 1 ? '' : 's'} left out — not used by the game</summary>
+             ${fileListHtml(s.skipped, 20)}</details>`
+          : ''
+      }
+    </div>`;
+}
+
+// Shows where every file of the staged mods will go, and resolves true when
+// the user confirms. Closing the window any other way cancels.
+function confirmInstall(summaries, failures) {
+  return new Promise((resolve) => {
+    const finish = (ok) => {
+      modalOnDismiss = null;
+      hideModal();
+      resolve(ok);
+    };
+    modalOnDismiss = () => finish(false);
+    showModal(`
+      <h3>${summaries.length === 1 ? 'Install this mod?' : `Install ${summaries.length} mods?`}</h3>
+      <p class="hint-text">Here's what the app found in ${summaries.length === 1 ? 'it' : 'each one'} and
+      exactly where every file will go. Nothing has been put in the game yet.</p>
+      ${
+        failures.length
+          ? `<div class="folder-check bad"><strong>Can't be installed:</strong>
+             <ul class="modal-list">${failures.map((f) => `<li>${esc(f)}</li>`).join('')}</ul></div>`
+          : ''
+      }
+      ${summaries.map(previewCardHtml).join('')}
+      <div class="modal-actions">
+        <button class="secondary" id="cancelInstall">Cancel</button>
+        <button id="confirmInstall">${summaries.length === 1 ? 'Install' : `Install ${summaries.length} mods`}</button>
+      </div>
+    `);
+    document.getElementById('cancelInstall').addEventListener('click', () => finish(false));
+    document.getElementById('confirmInstall').addEventListener('click', () => finish(true));
+  });
+}
+
+// Two passes: first every archive is unpacked and sorted (nothing touches the
+// game), then — once the user has seen where everything goes — each is put
+// in, one after another, so each install sees the files of the one before.
 async function installAll(paths) {
   if (installing) {
     showToast('Still installing — drop the next ones when it finishes.', true);
@@ -706,39 +775,57 @@ async function installAll(paths) {
   }
   installing = true;
   const failures = [];
+  const summaries = [];
   let installed = 0;
   try {
     for (const [i, zipPath] of paths.entries()) {
       const fileName = String(zipPath).split(/[\\/]/).pop();
       const counter = paths.length > 1 ? ` (${i + 1} of ${paths.length})` : '';
-      showToast(`Installing "${fileName}"${counter}…`, false, true);
+      showToast(`Checking "${fileName}"${counter}…`, false, true);
       try {
-        const mod = await window.modManager.installMod({ gameId: currentGameId, zipPath });
-        installed += 1;
-        await loadMods();
-        if (mod.originalRemoveError) {
-          failures.push(`${fileName}: installed, but couldn't move the original to the Recycle Bin (${mod.originalRemoveError})`);
-        }
+        summaries.push(await window.modManager.stageMod({ gameId: currentGameId, zipPath }));
       } catch (err) {
         failures.push(`${fileName}: ${errorText(err)}`);
       }
     }
+    toastEl.classList.add('hidden');
+
+    if (summaries.length === 0) {
+      showResults(paths.length === 1 ? "Couldn't install that mod" : "Couldn't install any of those mods", failures);
+      return;
+    }
+    if (!(await confirmInstall(summaries, failures))) {
+      for (const s of summaries) await window.modManager.discardStaged(s.stageId);
+      showToast('Cancelled — nothing was installed.');
+      return;
+    }
+
+    const problems = [];
+    for (const s of summaries) {
+      showToast(`Installing "${s.name}"…`, false, true);
+      try {
+        const mod = await window.modManager.commitStaged(s.stageId);
+        installed += 1;
+        if (mod.originalRemoveError) {
+          problems.push(`${s.name}: installed, but couldn't move the original to the Recycle Bin (${mod.originalRemoveError})`);
+        }
+      } catch (err) {
+        problems.push(`${s.name}: ${errorText(err)}`);
+      }
+    }
+    await loadMods();
+    if (problems.length) {
+      toastEl.classList.add('hidden');
+      showResults(`Installed ${installed} of ${summaries.length}`, problems);
+    } else {
+      showToast(
+        installed === 1
+          ? 'Installed. The original file was moved to the Recycle Bin.'
+          : `Installed ${installed} mods. The original files were moved to the Recycle Bin.`
+      );
+    }
   } finally {
     installing = false;
-  }
-
-  if (failures.length === 0) {
-    showToast(
-      installed === 1
-        ? 'Installed. The original file was moved to the Recycle Bin.'
-        : `Installed ${installed} mods. The original files were moved to the Recycle Bin.`
-    );
-  } else if (paths.length === 1 && installed === 0) {
-    toastEl.classList.add('hidden');
-    showResults("Couldn't install that mod", failures);
-  } else {
-    toastEl.classList.add('hidden');
-    showResults(`Installed ${installed} of ${paths.length}`, failures);
   }
 }
 

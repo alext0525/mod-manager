@@ -141,14 +141,43 @@ handle('choose-zip', async () => {
 
 handle('log', (message) => log(message));
 
+// Installing is two steps: stage-mod unpacks and sorts the archive and returns
+// a preview of where every file will go; commit-staged puts it in the game.
+// The dropped file's path is kept per stage so it can be tidied away after.
+const stagedOriginals = new Map();
+
+handle('stage-mod', async ({ gameId, zipPath, customTargetDir }) => {
+  log(`staging ${zipPath}`);
+  const summary = await modInstaller.stageMod({ gameId, zipPath, customTargetDir });
+  stagedOriginals.set(summary.stageId, zipPath);
+  return summary;
+});
+
+handle('discard-staged', (stageId) => {
+  stagedOriginals.delete(stageId);
+  modInstaller.discardStaged(stageId);
+});
+
+handle('commit-staged', async (stageId) => {
+  const zipPath = stagedOriginals.get(stageId);
+  stagedOriginals.delete(stageId);
+  const mod = modInstaller.commitStaged(stageId);
+  log(`installed "${mod.name}": ${JSON.stringify(mod.placements)}`);
+  return { ...mod, ...(await trashOriginal(zipPath, mod)) };
+});
+
 handle('install-mod', async ({ gameId, zipPath, customTargetDir }) => {
   log(`installing ${zipPath}`);
   const mod = await modInstaller.installMod({ gameId, zipPath, customTargetDir });
   log(`installed "${mod.name}": ${JSON.stringify(mod.placements)}`);
+  return { ...mod, ...(await trashOriginal(zipPath, mod)) };
+});
 
+async function trashOriginal(zipPath, mod) {
   // The archive is now safely stored in the game's zips/ folder, so clear away
   // the file the user dragged in. Recycle Bin, not permanent delete — a bad
   // download or a mis-drag should always be recoverable.
+  if (!zipPath) return { originalRemoved: false, originalRemoveError: null };
   let originalRemoved = false;
   let originalRemoveError = null;
   try {
@@ -166,8 +195,8 @@ handle('install-mod', async ({ gameId, zipPath, customTargetDir }) => {
     originalRemoveError = err.message;
   }
 
-  return { ...mod, originalRemoved, originalRemoveError };
-});
+  return { originalRemoved, originalRemoveError };
+}
 
 handle('remove-mod', ({ modId }) =>
   modInstaller.removeMod({
