@@ -14,6 +14,7 @@ const modStore = require('./lib/modStore');
 const modInstaller = require('./lib/modInstaller');
 const gameDetect = require('./lib/gameDetect');
 const profileStore = require('./lib/profileStore');
+const modeSwitch = require('./lib/modeSwitch');
 const { getStrategy } = require('./lib/strategies');
 
 const LOG_FILE = path.join(DATA_DIR, 'log.txt');
@@ -91,9 +92,15 @@ app.on('activate', () => {
 // ---------- Games ----------
 
 handle('get-games', () =>
-  gameStore
-    .loadGames()
-    .map((g) => ({ ...gameDetect.withLiveInfo(g), hint: getStrategy(g.strategy).hint }))
+  gameStore.loadGames().map((g) => {
+    const known = gameDetect.knownGameFor(g);
+    return {
+      ...gameDetect.withLiveInfo(g),
+      hint: getStrategy(g.strategy).hint,
+      switchable: modeSwitch.isSwitchable(g),
+      moddedNote: (known && known.moddedNote) || '',
+    };
+  })
 );
 
 handle('detect-games', () => gameDetect.scanSteam());
@@ -169,9 +176,28 @@ handle('remove-mod', ({ modId }) =>
   })
 );
 
-handle('set-mod-active', ({ modId, active }) =>
-  active ? modInstaller.activateMod(modId) : modInstaller.deactivateMod(modId)
-);
+handle('set-mod-active', ({ modId, active }) => modInstaller.setModWanted(modId, active));
+
+// ---------- Modded / clean (GTA V, RDR2) ----------
+
+handle('check-game-folder', (gameId) => modeSwitch.checkFolder(gameStore.getGame(gameId)));
+
+handle('set-game-mode', ({ gameId, mode }) => {
+  log(`switching ${gameId} to ${mode}`);
+  const result = modeSwitch.setMode(gameId, mode);
+  return { ...result, ...modeSwitch.checkFolder(gameStore.getGame(gameId)) };
+});
+
+handle('launch-game', ({ gameId, mode }) => {
+  log(`launching ${gameId} ${mode}`);
+  const result = modeSwitch.launch(gameId, mode);
+  if (!result.launched) log(`launch refused: ${JSON.stringify(result)}`);
+  return result;
+});
+
+handle('trust-game-files', ({ gameId, names }) => modeSwitch.trustFiles(gameId, names));
+
+handle('open-game-folder', (gameId) => shell.openPath(gameStore.getGame(gameId).modsPath));
 
 // ---------- Profiles ----------
 
