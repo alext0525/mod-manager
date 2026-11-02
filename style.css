@@ -283,6 +283,10 @@ button:disabled { opacity: 0.5; cursor: default; }
 }
 
 .list-actions { display: flex; gap: 8px; }
+.variant-picker { margin: 8px 0; }
+.variant-option { display: block; margin-top: 6px; cursor: pointer; }
+.variant-option input { margin-right: 6px; }
+.pick-error { color: #ff9b97; font-size: 13px; margin: 8px 0 0; }
 #crashBanner { margin-bottom: 20px; }
 .modal h4 { margin: 16px 0 4px; font-size: 14px; }
 .log-line {

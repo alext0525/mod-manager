@@ -1,6 +1,6 @@
 {
   "name": "mod-manager",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "private": true,
   "description": "Local mod manager: drop a zip, it installs into your game's Paks folder.",
   "main": "main.js",

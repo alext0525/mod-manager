@@ -76,6 +76,8 @@ function checkForAppUpdates() {
 app.whenReady().then(() => {
   try {
     gameDetect.refreshKnownGames();
+    const added = gameDetect.addAllKnown();
+    if (added.length) log(`added installed games: ${added.join(', ')}`);
   } catch (err) {
     log(`refreshing games failed: ${err.stack}`);
   }
@@ -175,9 +177,9 @@ handle('log', (message) => log(message));
 // The dropped file's path is kept per stage so it can be tidied away after.
 const stagedOriginals = new Map();
 
-handle('stage-mod', async ({ gameId, zipPath, customTargetDir }) => {
-  log(`staging ${zipPath}`);
-  const summary = await modInstaller.stageMod({ gameId, zipPath, customTargetDir });
+handle('stage-mod', async ({ gameId, zipPath, customTargetDir, variants, replacingStageId }) => {
+  log(`staging ${zipPath}${variants ? ` (versions: ${JSON.stringify(variants)})` : ''}`);
+  const summary = await modInstaller.stageMod({ gameId, zipPath, customTargetDir, variants, replacingStageId });
   stagedOriginals.set(summary.stageId, zipPath);
   return summary;
 });
