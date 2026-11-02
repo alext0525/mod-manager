@@ -14,7 +14,8 @@ const modalOverlay = document.getElementById('modalOverlay');
 const modalBox = document.getElementById('modalBox');
 const toastEl = document.getElementById('toast');
 
-const SUPPORTED_EXTS = ['.zip', '.rar', '.7z'];
+// .kspkg is Assetto Corsa EVO's car package, droppable on its own.
+const SUPPORTED_EXTS = ['.zip', '.rar', '.7z', '.kspkg'];
 
 const STRATEGY_LABELS = {
   paks: 'Unreal Engine — .pak files into the Paks folder (Ready or Not style)',
@@ -124,6 +125,9 @@ function scanRow(g) {
   } else if (g.status === 'unknown') {
     detail = 'No mods folder found — you can set it up yourself';
     action = `<button class="secondary" data-setup="${esc(g.steamAppId)}">Set up</button>`;
+  } else if (g.status === 'elsewhere') {
+    detail = g.reason;
+    action = '<span class="badge off">Modded elsewhere</span>';
   } else {
     detail = g.reason;
     action = '';
@@ -131,7 +135,7 @@ function scanRow(g) {
   if (g.added) action = '<span class="badge on">Added</span>';
 
   return `
-    <li class="${g.status === 'unsupported' ? 'unsupported' : ''}">
+    <li class="${g.status === 'unsupported' || g.status === 'elsewhere' ? 'unsupported' : ''}">
       <div class="mod-info">
         <div class="mod-name">${esc(g.name)}</div>
         <div class="mod-date" title="${esc(detail)}">${esc(detail)}</div>
@@ -880,10 +884,35 @@ function fileListHtml(files, max = 8) {
   return `<ul class="file-list">${shown}${more}</ul>`;
 }
 
-function previewCardHtml(s) {
+// The version picker for archives that hold alternatives or optional extras.
+function variantPickerHtml(s, index) {
+  if (!s.variants) return '';
+  return `
+    <div class="folder-check warn-box variant-picker">
+      <strong>${
+        s.variants.groups.some((g) => g.id === '')
+          ? 'This archive has optional parts.'
+          : 'This archive holds more than one version.'
+      }</strong>
+      Each folder below is a separate version or an optional extra — pick what you want installed.
+      ${s.variants.groups
+        .map(
+          (g) => `
+        <label class="variant-option">
+          <input type="checkbox" data-variant-index="${index}" value="${esc(g.id)}" ${g.selected ? 'checked' : ''} />
+          ${esc(g.label)} <span class="hint-text">(${g.count} .pak file${g.count === 1 ? '' : 's'})</span>
+        </label>`
+        )
+        .join('')}
+      ${s.pickError ? `<p class="pick-error">That combination didn't work, so the previous choice is kept: ${esc(s.pickError)}</p>` : ''}
+    </div>`;
+}
+
+function previewCardHtml(s, index) {
   return `
     <div class="preview-mod">
       <div class="mod-name">${esc(s.name)} ${s.kind ? `<span class="badge on">${esc(s.kind)}</span>` : ''}</div>
+      ${variantPickerHtml(s, index)}
       ${
         s.replaces && s.replaces.length
           ? `<p class="modal-note">Replaces the older <strong>${esc(s.replaces.join(', '))}</strong> — it's removed
@@ -917,8 +946,11 @@ function previewCardHtml(s) {
 }
 
 // Shows where every file of the staged mods will go, and resolves true when
-// the user confirms. Closing the window any other way cancels.
-function confirmInstall(summaries, failures) {
+// the user confirms. Closing the window any other way cancels. Picking a
+// different version re-sorts that mod at once (replacing its entry in
+// `summaries`), so the file list always shows exactly what will go in.
+// `zipPaths[i]` is the file behind `summaries[i]`.
+function confirmInstall(summaries, failures, zipPaths) {
   return new Promise((resolve) => {
     const finish = (ok) => {
       modalOnDismiss = null;
@@ -926,24 +958,64 @@ function confirmInstall(summaries, failures) {
       resolve(ok);
     };
     modalOnDismiss = () => finish(false);
-    showModal(`
-      <h3>${summaries.length === 1 ? 'Install this mod?' : `Install ${summaries.length} mods?`}</h3>
-      <p class="hint-text">Here's what the app found in ${summaries.length === 1 ? 'it' : 'each one'} and
-      exactly where every file will go. Nothing has been put in the game yet.</p>
-      ${
-        failures.length
-          ? `<div class="folder-check bad"><strong>Can't be installed:</strong>
-             <ul class="modal-list">${failures.map((f) => `<li>${esc(f)}</li>`).join('')}</ul></div>`
-          : ''
-      }
-      ${summaries.map(previewCardHtml).join('')}
-      <div class="modal-actions">
-        <button class="secondary" id="cancelInstall">Cancel</button>
-        <button id="confirmInstall">${summaries.length === 1 ? 'Install' : `Install ${summaries.length} mods`}</button>
-      </div>
-    `);
-    document.getElementById('cancelInstall').addEventListener('click', () => finish(false));
-    document.getElementById('confirmInstall').addEventListener('click', () => finish(true));
+    let resorting = false;
+
+    const render = () => {
+      const waiting = summaries.filter((s) => s.needsChoice).length;
+      const scroll = modalBox.scrollTop;
+      showModal(`
+        <h3>${summaries.length === 1 ? 'Install this mod?' : `Install ${summaries.length} mods?`}</h3>
+        <p class="hint-text">Here's what the app found in ${summaries.length === 1 ? 'it' : 'each one'} and
+        exactly where every file will go. Nothing has been put in the game yet.</p>
+        ${
+          failures.length
+            ? `<div class="folder-check bad"><strong>Can't be installed:</strong>
+               <ul class="modal-list">${failures.map((f) => `<li>${esc(f)}</li>`).join('')}</ul></div>`
+            : ''
+        }
+        ${summaries.map(previewCardHtml).join('')}
+        <div class="modal-actions">
+          <button class="secondary" id="cancelInstall">Cancel</button>
+          <button id="confirmInstall" ${waiting ? 'disabled title="Pick a version first"' : ''}>
+            ${summaries.length === 1 ? 'Install' : `Install ${summaries.length} mods`}
+          </button>
+        </div>
+      `);
+      modalBox.scrollTop = scroll;
+      document.getElementById('cancelInstall').addEventListener('click', () => finish(false));
+      document.getElementById('confirmInstall').addEventListener('click', () => finish(true));
+
+      modalBox.querySelectorAll('[data-variant-index]').forEach((box) => {
+        box.addEventListener('change', async () => {
+          // One re-sort at a time; ticks made meanwhile are ignored.
+          if (resorting) return;
+          resorting = true;
+          const i = Number(box.getAttribute('data-variant-index'));
+          const old = summaries[i];
+          const picked = [...modalBox.querySelectorAll(`[data-variant-index="${i}"]`)]
+            .filter((b) => b.checked)
+            .map((b) => b.value);
+          modalBox.querySelectorAll('input, button').forEach((el) => (el.disabled = true));
+          try {
+            // The new choice is sorted before the old one is thrown away, so a
+            // choice that doesn't work leaves the previous one in place.
+            summaries[i] = await window.modManager.stageMod({
+              gameId: currentGameId,
+              zipPath: zipPaths[i],
+              variants: picked,
+              replacingStageId: old.stageId,
+            });
+            await window.modManager.discardStaged(old.stageId);
+          } catch (err) {
+            summaries[i] = { ...old, pickError: errorText(err) };
+          } finally {
+            resorting = false;
+          }
+          render();
+        });
+      });
+    };
+    render();
   });
 }
 
@@ -958,6 +1030,7 @@ async function installAll(paths) {
   installing = true;
   const failures = [];
   const summaries = [];
+  const stagedPaths = [];
   let installed = 0;
   try {
     for (const [i, zipPath] of paths.entries()) {
@@ -966,6 +1039,7 @@ async function installAll(paths) {
       showToast(`Checking "${fileName}"${counter}…`, false, true);
       try {
         summaries.push(await window.modManager.stageMod({ gameId: currentGameId, zipPath }));
+        stagedPaths.push(zipPath);
       } catch (err) {
         failures.push(`${fileName}: ${errorText(err)}`);
       }
@@ -976,7 +1050,7 @@ async function installAll(paths) {
       showResults(paths.length === 1 ? "Couldn't install that mod" : "Couldn't install any of those mods", failures);
       return;
     }
-    if (!(await confirmInstall(summaries, failures))) {
+    if (!(await confirmInstall(summaries, failures, stagedPaths))) {
       for (const s of summaries) await window.modManager.discardStaged(s.stageId);
       showToast('Cancelled — nothing was installed.');
       return;
