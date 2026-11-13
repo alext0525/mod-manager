@@ -75,17 +75,26 @@ function checkForAppUpdates() {
 
 app.whenReady().then(() => {
   try {
+    modInstaller.clearStaging();
     gameDetect.refreshKnownGames();
     const added = gameDetect.addAllKnown();
     if (added.length) log(`added installed games: ${added.join(', ')}`);
   } catch (err) {
     log(`refreshing games failed: ${err.stack}`);
   }
+  try {
+    modeSwitch.recoverModdedGames(onModsTakenOut);
+  } catch (err) {
+    log(`recovering modded games failed: ${err.stack}`);
+  }
   createWindow();
   checkForAppUpdates();
 });
 
+// While a modded session is being watched the app stays alive without a
+// window, so the mods still come out when the game closes; it quits after.
 app.on('window-all-closed', () => {
+  if (modeSwitch.isWatching()) return;
   if (process.platform !== 'darwin') app.quit();
 });
 
@@ -253,10 +262,26 @@ handle('set-game-mode', ({ gameId, mode }) => {
   return { ...result, ...modeSwitch.checkFolder(gameStore.getGame(gameId)) };
 });
 
+// Called when a modded session has ended and the mods have been taken out.
+function onModsTakenOut({ gameId, errors, started, atStartup }) {
+  log(
+    `mods taken out of ${gameId} ` +
+      (atStartup ? 'at startup (left in modded mode)' : started ? 'after the game closed' : '(the game never started)') +
+      (errors.length ? ` — problems: ${errors.join('; ')}` : '')
+  );
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('mods-taken-out', { gameId, errors, started });
+  } else if (app.isReady() && BrowserWindow.getAllWindows().length === 0 && !modeSwitch.isWatching()) {
+    // The window was closed during the session; the job is done.
+    app.quit();
+  }
+}
+
 handle('launch-game', ({ gameId, mode }) => {
   log(`launching ${gameId} ${mode}`);
   const result = modeSwitch.launch(gameId, mode);
   if (!result.launched) log(`launch refused: ${JSON.stringify(result)}`);
+  else if (mode === 'modded') modeSwitch.watchModdedSession(gameId, onModsTakenOut);
   return result;
 });
 

@@ -392,7 +392,7 @@ async function renderModePanel() {
         <div class="mode-title">
           ${
             modded
-              ? '<span class="badge warn">Modded</span> Mods are in the game folder — story mode only'
+              ? '<span class="badge warn">Modded</span> Mods are in the game folder — story mode only. They come out by themselves when you close the game.'
               : check.clean
                 ? '<span class="badge on">Clean</span> No mods in the game folder — safe for online'
                 : '<span class="badge danger">Not clean</span> The app\'s mods are out, but other files are in the game folder'
@@ -1154,6 +1154,16 @@ browseBtn.addEventListener('click', async () => {
 window.addEventListener('error', (e) => {
   window.modManager.log('uncaught error: ' + (e.error && e.error.stack ? e.error.stack : e.message));
   showToast('Error: ' + e.message, true);
+});
+
+// A modded GTA/RDR2 session ended and the app took the mods back out.
+window.modManager.onModsTakenOut(async ({ gameId, errors, started }) => {
+  const game = games.find((g) => g.id === gameId);
+  const name = game ? game.name : 'The game';
+  await loadGames(currentGameId);
+  if (errors.length) showResults(`Couldn't take every mod out of ${name}`, errors);
+  else if (started) showToast(`${name} closed — mods taken out, the game folder is clean again.`);
+  else showToast(`${name} didn't start, so the mods were taken back out.`, true);
 });
 
 // ---------- App updates ----------

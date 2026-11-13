@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('modManager', {
   launchGame: (data) => ipcRenderer.invoke('launch-game', data),
   trustGameFiles: (data) => ipcRenderer.invoke('trust-game-files', data),
   openGameFolder: (gameId) => ipcRenderer.invoke('open-game-folder', gameId),
+  onModsTakenOut: (callback) => ipcRenderer.on('mods-taken-out', (event, info) => callback(info)),
   installAppUpdate: () => ipcRenderer.invoke('install-app-update'),
   onUpdateReady: (callback) => ipcRenderer.on('update-ready', (event, version) => callback(version)),
   log: (message) => ipcRenderer.invoke('log', message),
